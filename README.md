@@ -8,9 +8,9 @@ Maps are the levels that make up the game world.
 * layout: Vec<Material>
 * lights: Vec<Light>
 
-- [ ] Material: Enum
+- [x] Material: Enum
 
-- [X] Light:
+- [x] Light:
 * position: Vector2
 * color: Color
 * luminosity: float
