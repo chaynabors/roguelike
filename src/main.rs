@@ -4,6 +4,7 @@ mod light;
 mod map;
 mod material;
 mod player;
+mod state;
 mod vector2;
 
 use std::io::Write;

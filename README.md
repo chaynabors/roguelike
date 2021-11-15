@@ -30,7 +30,7 @@ Maps are the levels that make up the game world.
 - [x] Player:
 * position: Vector2
 
-- [ ] State:
+- [x] State:
 * map: Map
 * camera: Camera
 * player: Player
