@@ -13,17 +13,20 @@ use std::io::Write;
 
 use chrono::Local;
 use log::LevelFilter;
+use log::error;
 use log::info;
+use winit::dpi::PhysicalSize;
 use winit::event::Event;
 use winit::event::WindowEvent;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
+use crate::error::Error;
 use crate::renderer::Renderer;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), crate::error::Error> {
     env_logger::builder()
         .format(|buf, record| {
             writeln!(
@@ -39,11 +42,20 @@ async fn main() {
 
     info!("Creating event loop and window");
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = match WindowBuilder::new()
+        .with_min_inner_size(PhysicalSize::new(320, 200))
+        .build(&event_loop)
+    {
+        Ok(window) => window,
+        Err(_) => return Err(Error::WindowCreationFailed),
+    };
     info!("Created event loop and window");
 
     info!("Creating renderer");
-    let renderer = Renderer::new(&window);
+    let mut renderer = match Renderer::new(&window).await {
+        Ok(renderer) => renderer,
+        Err(e) => return Err(e),
+    };
     info!("Created renderer");
 
     info!("Entering event loop");
@@ -52,9 +64,19 @@ async fn main() {
 
         match event {
             Event::WindowEvent { event, .. } => match event {
+                WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => renderer.resize(*new_inner_size), 
                 _ => (),
-            }
+            },
+            Event::RedrawRequested(_) => if let Err(e) = renderer.render() { match e {
+                Error::SurfaceLost => renderer.resize(window.inner_size()),
+                Error::OutOfMemory => {
+                    error!("Application ran out of memory");
+                    *control_flow = ControlFlow::Exit;
+                },
+                _ => panic!("{:?}", e),
+            }},
             _ => (),
         }
     });
