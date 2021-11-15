@@ -1,5 +1,5 @@
 #[derive(Copy, Clone, Debug)]
-enum Material {
+pub enum Material {
     Grass,
     Rubble,
     Pavement,

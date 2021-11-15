@@ -1,6 +1,7 @@
 mod camera;
 mod color;
 mod light;
+mod map;
 mod material;
 mod player;
 mod vector2;

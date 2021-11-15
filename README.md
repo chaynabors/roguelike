@@ -4,7 +4,7 @@
 Maps are the levels that make up the game world.
 
 ### Definitions
-- [ ] Map:
+- [x] Map:
 * layout: Vec<Material>
 * lights: Vec<Light>
 
