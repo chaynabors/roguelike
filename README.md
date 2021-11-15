@@ -10,7 +10,7 @@ Maps are the levels that make up the game world.
 
 - [ ] Material: Enum
 
-- [ ] Light:
+- [X] Light:
 * position: Vector2
 * color: Color
 * luminosity: float
@@ -24,10 +24,10 @@ Maps are the levels that make up the game world.
 * g: float
 * b: float
 
-- [ ] Camera:
+- [x] Camera:
 * position: Vector2
 
-- [ ] Player:
+- [x] Player:
 * position: Vector2
 
 - [ ] State:
