@@ -1,5 +1,5 @@
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct Color {
+pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
