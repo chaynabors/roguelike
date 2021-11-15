@@ -1,9 +1,11 @@
 mod camera;
 mod color;
+mod error;
 mod light;
 mod map;
 mod material;
 mod player;
+mod renderer;
 mod state;
 mod vector2;
 
@@ -18,7 +20,10 @@ use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
-fn main() {
+use crate::renderer::Renderer;
+
+#[tokio::main]
+async fn main() {
     env_logger::builder()
         .format(|buf, record| {
             writeln!(
@@ -34,8 +39,12 @@ fn main() {
 
     info!("Creating event loop and window");
     let event_loop = EventLoop::new();
-    let _window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new().build(&event_loop).unwrap();
     info!("Created event loop and window");
+
+    info!("Creating renderer");
+    let renderer = Renderer::new(&window);
+    info!("Created renderer");
 
     info!("Entering event loop");
     event_loop.run(move |event, _, control_flow| {

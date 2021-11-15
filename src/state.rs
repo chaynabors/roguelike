@@ -1,5 +1,5 @@
-use crate::map::Map;
 use crate::camera::Camera;
+use crate::map::Map;
 use crate::player::Player;
 
 #[derive(Clone, Debug)]
