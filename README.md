@@ -24,10 +24,10 @@ Maps are the levels that make up the game world.
 * g: float
 * b: float
 
-- [ ] Camera:
+- [x] Camera:
 * position: Vector2
 
-- [X] Player:
+- [x] Player:
 * position: Vector2
 
 - [ ] State:

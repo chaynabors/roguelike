@@ -2,6 +2,7 @@ mod color;
 mod light;
 mod player;
 mod vector2;
+mod camera;
 
 use winit::event::Event;
 use winit::event::WindowEvent;
