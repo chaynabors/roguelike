@@ -4,33 +4,33 @@
 Maps are the levels that make up the game world.
 
 ### Definitions
-Map:
+- [ ] Map:
 * layout: Vec<Material>
 * lights: Vec<Light>
 
-Material: Enum
+- [ ] Material: Enum
 
-Light:
+- [ ] Light:
 * position: Vector2
 * color: Color
 * luminosity: float
 
-Vector2:
+- [ ] Vector2:
 * x: float
 * y: float
 
-Color:
+- [x] Color:
 * r: float
 * g: float
 * b: float
 
-Camera:
+- [ ] Camera:
 * position: Vector2
 
-Player:
+- [ ] Player:
 * position: Vector2
 
-State:
+- [ ] State:
 * map: Map
 * camera: Camera
 * player: Player
