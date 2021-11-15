@@ -15,7 +15,7 @@ Maps are the levels that make up the game world.
 * color: Color
 * luminosity: float
 
-- [ ] Vector2:
+- [x] Vector2:
 * x: float
 * y: float
 
