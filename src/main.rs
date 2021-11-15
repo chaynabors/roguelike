@@ -9,6 +9,8 @@ use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
 fn main() {
+    env_logger::init();
+
     let event_loop = EventLoop::new();
     let _window = WindowBuilder::new().build(&event_loop).unwrap();
 
