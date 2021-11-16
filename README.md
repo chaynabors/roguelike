@@ -1,9 +1,30 @@
 # roguelike
- 
-## Maps
-Maps are the levels that make up the game world.
+A game about exploring with friends... in the terminal.
 
-### Definitions
+### Todo
+* Domain
+    - [x] Type definitions
+    - [x] Type de/serialization
+* Rendering
+    - [x] Device interaction
+    - [x] Screen Clearing
+    - [ ] Texture blitting
+    - [ ] Render pass per light
+* Audio
+    - [ ] Simple audio playback
+* Networking
+    - [ ] Messaging and handshake protocol
+    - [ ] Version comparison
+    - [ ] P2P state manipulation
+* Content
+    - [ ] Procedural map generation
+    - [ ] Primitive set of sounds
+    - [ ] Character set (font)
+* Gameplay
+    - [ ] Collision detection/resolution
+    - [ ] Character controller
+
+### Type Definitions
 - [x] Map:
 * layout: Vec<Material>
 * lights: Vec<Light>

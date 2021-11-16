@@ -80,4 +80,6 @@ async fn main() -> Result<(), crate::error::Error> {
             _ => (),
         }
     });
+
+    // Code here will never be run
 }
