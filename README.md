@@ -1,7 +1,6 @@
 # roguelike
 A game about exploring with friends... in the terminal.
 
-***
 
 ## Todo
 * Domain
@@ -26,7 +25,6 @@ A game about exploring with friends... in the terminal.
     - [ ] Collision detection/resolution
     - [ ] Character controller
 
-***
 
 ## Type Definitions
 Map:
@@ -60,5 +58,3 @@ State:
 * map: Map
 * camera: Camera
 * player: Player
-
-***
