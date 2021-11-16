@@ -1,7 +1,9 @@
 # roguelike
 A game about exploring with friends... in the terminal.
 
-### Todo
+***
+
+## Todo
 * Domain
     - [x] Type definitions
     - [x] Type de/serialization
@@ -24,34 +26,39 @@ A game about exploring with friends... in the terminal.
     - [ ] Collision detection/resolution
     - [ ] Character controller
 
-### Type Definitions
-- [x] Map:
+***
+
+## Type Definitions
+Map:
 * layout: Vec<Material>
 * lights: Vec<Light>
 
-- [x] Material: Enum
+Material:
+    Enum
 
-- [x] Light:
+Light:
 * position: Vector2
 * color: Color
 * luminosity: float
 
-- [x] Vector2:
+Vector2:
 * x: float
 * y: float
 
-- [x] Color:
+Color:
 * r: float
 * g: float
 * b: float
 
-- [x] Camera:
+Camera:
 * position: Vector2
 
-- [x] Player:
+Player:
 * position: Vector2
 
-- [x] State:
+State:
 * map: Map
 * camera: Camera
 * player: Player
+
+***
