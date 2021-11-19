@@ -7,3 +7,4 @@ use crate::vector2::Vector2;
 pub struct Camera {
     position: Vector2,
 }
+
