@@ -7,7 +7,9 @@ use crate::material::Material;
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Map {
     layout: Vec<Material>,
+    width: u32,
     lights: Vec<Light>,
+
 }
 
 #[cfg(test)]
