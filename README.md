@@ -32,7 +32,7 @@ Map:
 * lights: Vec<Light>
 
 Material:
-    Enum
+* Enum
 
 Light:
 * position: Vector2
