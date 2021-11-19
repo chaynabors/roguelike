@@ -8,6 +8,7 @@ use wgpu::BindGroupDescriptor;
 use wgpu::BindGroupEntry;
 use wgpu::BindGroupLayoutDescriptor;
 use wgpu::BindGroupLayoutEntry;
+use wgpu::BindingType;
 use wgpu::Buffer;
 use wgpu::BufferBindingType;
 use wgpu::BufferDescriptor;
@@ -32,14 +33,19 @@ use wgpu::Queue;
 use wgpu::RequestAdapterOptions;
 use wgpu::ShaderModuleDescriptor;
 use wgpu::ShaderSource;
+use wgpu::ShaderStages;
 use wgpu::Surface;
 use wgpu::SurfaceConfiguration;
 use wgpu::SurfaceError;
 use wgpu::TextureAspect;
 use wgpu::TextureUsages;
+use wgpu::util::BufferInitDescriptor;
+use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
 use crate::error::Error;
+
+const TILE_SIZE: u32 = 16;
 
 pub struct Renderer {
     _instance: Instance,
@@ -48,6 +54,7 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     size: PhysicalSize<u32>,
+    virtual_size: PhysicalSize<u32>,
     surface_configuration: SurfaceConfiguration,
     display_buffer: Buffer,
     bind_group: BindGroup,
@@ -56,8 +63,8 @@ pub struct Renderer {
 
 impl Renderer {
     pub async fn new(window: &winit::window::Window) -> Result<Self, Error> {
-        let instance = Instance::new(Backends::all());
-        
+        let instance = Instance::new(Backends::PRIMARY);
+
         let surface = unsafe { instance.create_surface(window) };
 
         let adapter = match instance.request_adapter(&RequestAdapterOptions {
@@ -78,6 +85,7 @@ impl Renderer {
         };
 
         let size = window.inner_size();
+        let virtual_size = virtual_size(size);
         let surface_configuration = SurfaceConfiguration {
             usage: TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT,
             format: match surface.get_preferred_format(&adapter) {
@@ -90,7 +98,7 @@ impl Renderer {
         };
         surface.configure(&device, &surface_configuration);
 
-        let (display_buffer, bind_group, pipeline) = create_pipeline(&device, size);
+        let (display_buffer, bind_group, pipeline) = create_pipeline(&device, virtual_size);
 
         Ok(Self {
             _instance: instance,
@@ -99,6 +107,7 @@ impl Renderer {
             device,
             queue,
             size,
+            virtual_size,
             surface_configuration,
             display_buffer,
             bind_group,
@@ -134,16 +143,15 @@ impl Renderer {
 
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch(20, 20, 1);
+            pass.dispatch(self.virtual_size.width / TILE_SIZE, self.virtual_size.height / TILE_SIZE, 1);
         }
 
-        let bytes_per_row = self.size.width * 4;
         command_encoder.copy_buffer_to_texture(
             ImageCopyBuffer {
                 buffer: &self.display_buffer,
                 layout: ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: NonZeroU32::new(bytes_per_row + 256 - (bytes_per_row % 256)),
+                    bytes_per_row: NonZeroU32::new(self.virtual_size.width * 4),
                     rows_per_image: None,
                 },
             },
@@ -164,25 +172,45 @@ impl Renderer {
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 { return };
+
         self.size = size;
+        self.virtual_size = virtual_size(size);
         self.surface_configuration.width = size.width;
         self.surface_configuration.height = size.height;
         self.surface.configure(&self.device, &self.surface_configuration);
-        let (display_buffer, bind_group, pipeline) = create_pipeline(&self.device, size);
+
+        let (display_buffer, bind_group, pipeline) = create_pipeline(&self.device, self.virtual_size);
         self.display_buffer = display_buffer;
         self.bind_group = bind_group;
         self.pipeline = pipeline;
     }
 }
 
-fn create_pipeline(device: &Device, size: PhysicalSize<u32>) -> (Buffer, BindGroup, ComputePipeline) {
+fn virtual_size(size: PhysicalSize<u32>) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        size.width + (TILE_SIZE * 4) - (size.width % (TILE_SIZE * 4)),
+        size.height + TILE_SIZE - (size.height % TILE_SIZE),
+    )
+}
+
+fn create_pipeline(device: &Device, virtual_size: PhysicalSize<u32>) -> (Buffer, BindGroup, ComputePipeline) {
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: Some("bind_group_layout"),
         entries: &[
             BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage {
                         read_only: false,
                     },
@@ -194,9 +222,19 @@ fn create_pipeline(device: &Device, size: PhysicalSize<u32>) -> (Buffer, BindGro
         ],
     });
 
+    let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("uniform_buffer"),
+        contents: bytemuck::cast_slice(&[
+            TILE_SIZE,
+            virtual_size.width,
+            virtual_size.height,
+        ]),
+        usage: BufferUsages::UNIFORM,
+    });
+
     let display_buffer = device.create_buffer(&BufferDescriptor {
         label: Some("display_buffer"),
-        size: size.width as u64 * size.height as u64 * 32,
+        size: (virtual_size.width * virtual_size.height * 4) as u64,
         usage: BufferUsages::COPY_SRC | BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
@@ -207,6 +245,10 @@ fn create_pipeline(device: &Device, size: PhysicalSize<u32>) -> (Buffer, BindGro
         entries: &[
             BindGroupEntry {
                 binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
                 resource: display_buffer.as_entire_binding(),
             },
         ],
