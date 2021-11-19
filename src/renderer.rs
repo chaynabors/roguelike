@@ -45,8 +45,6 @@ use winit::dpi::PhysicalSize;
 
 use crate::error::Error;
 
-const TILE_SIZE: u32 = 16;
-
 pub struct Renderer {
     _instance: Instance,
     surface: Surface,
@@ -143,7 +141,7 @@ impl Renderer {
 
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch(self.virtual_size.width / TILE_SIZE, self.virtual_size.height / TILE_SIZE, 1);
+            pass.dispatch(self.virtual_size.width / 16, self.virtual_size.height / 16, 1);
         }
 
         command_encoder.copy_buffer_to_texture(
@@ -188,8 +186,8 @@ impl Renderer {
 
 fn virtual_size(size: PhysicalSize<u32>) -> PhysicalSize<u32> {
     PhysicalSize::new(
-        size.width + (TILE_SIZE * 4) - (size.width % (TILE_SIZE * 4)),
-        size.height + TILE_SIZE - (size.height % TILE_SIZE),
+        size.width + 64 - (size.width % 64),
+        size.height + 16 - (size.height % 16),
     )
 }
 
@@ -225,7 +223,6 @@ fn create_pipeline(device: &Device, virtual_size: PhysicalSize<u32>) -> (Buffer,
     let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("uniform_buffer"),
         contents: bytemuck::cast_slice(&[
-            TILE_SIZE,
             virtual_size.width,
             virtual_size.height,
         ]),
