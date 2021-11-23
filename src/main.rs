@@ -3,7 +3,7 @@ mod color;
 mod error;
 mod light;
 mod map;
-mod material;
+mod tile;
 mod player;
 mod renderer;
 mod state;

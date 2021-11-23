@@ -1,5 +1,5 @@
 # roguelike
-A game about exploring with friends... in the terminal.
+A game about exploring with friends... with graphics not *too* far from DOS.
 
 
 ## Todo
@@ -9,8 +9,12 @@ A game about exploring with friends... in the terminal.
 * Rendering
     - [x] Device interaction
     - [x] Screen Clearing
-    - [ ] Texture blitting
-    - [ ] Render pass per light
+    - [x] Tile rendering
+    - [x] Simple distance lighting
+    - [ ] Colored lights
+    - [ ] Arbitrarily numbered lights
+    - [ ] Chained tile rendering
+    - [ ] Light dropoff on wall penetration
 * Audio
     - [ ] Simple audio playback
 * Networking
@@ -20,10 +24,12 @@ A game about exploring with friends... in the terminal.
 * Content
     - [ ] Procedural map generation
     - [ ] Primitive set of sounds
-    - [ ] Character set (font)
+    ~~- [ ] Character set (font)~~
+    - [x] 2 color spritesheet with alpha
 * Gameplay
     - [ ] Collision detection/resolution
     - [ ] Character controller
+    - [ ] Character customization
 
 
 ## Type Definitions
