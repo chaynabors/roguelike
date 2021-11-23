@@ -104,11 +104,6 @@ impl Vertex {
                     shader_location: 0,
                     format: VertexFormat::Float32x2,
                 },
-                VertexAttribute {
-                    offset:0,
-                    shader_location: 0,
-                    format: VertexFormat::Float32x2,
-                },
             ],
         }
     }
@@ -154,7 +149,7 @@ pub struct Renderer {
 impl Renderer {
     pub async fn new(window: &winit::window::Window) -> Result<Self, Error> {
         let instance = Instance::new(Backends::PRIMARY);
-        
+
         let surface = unsafe { instance.create_surface(window) };
 
         let adapter = match instance.request_adapter(&RequestAdapterOptions {

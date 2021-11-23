@@ -78,5 +78,6 @@ fn draw_light(
 
     let iposition = vec2<i32>(position.xy);
     let unlit_map_dimensions = textureDimensions(unlit_map);
-    return textureLoad(unlit_map, iposition % unlit_map_dimensions, 0) * light;
+    //return textureLoad(unlit_map, iposition % unlit_map_dimensions, 0) * light;
+    return textureLoad(unlit_map, iposition, 0) * light;
 }
