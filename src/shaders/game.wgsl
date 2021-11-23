@@ -55,7 +55,7 @@ fn draw_map(
     let tile_detail = unpack4x8unorm(tile_data.detail);
 
     let sprite_atlas_dimensions = textureDimensions(sprite_atlas);
-    let raw_color = textureLoad(sprite_atlas, (iposition % vec2<i32>(sprite_size) + tile_position * sprite_size) % sprite_atlas_dimensions, 0);
+    let raw_color = textureLoad(sprite_atlas, (iposition % vec2<i32>(sprite_size) + tile_position * vec2<i32>(sprite_size)) % sprite_atlas_dimensions, 0);
     var color = raw_color * tile_color;
     color = color + (vec4<f32>(1.0, 1.0, 1.0, raw_color.a) - raw_color) * tile_detail;
     return color;
