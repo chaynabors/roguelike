@@ -5,7 +5,6 @@ use bytemuck::Zeroable;
 use image::ImageDecoder;
 use image::gif::GifDecoder;
 use log::warn;
-use wgpu::Adapter;
 use wgpu::Backends;
 use wgpu::BindGroup;
 use wgpu::BindGroupDescriptor;
@@ -16,9 +15,10 @@ use wgpu::BindingResource;
 use wgpu::BindingType;
 use wgpu::BlendState;
 use wgpu::Buffer;
+use wgpu::BufferBinding;
 use wgpu::BufferBindingType;
+use wgpu::BufferSize;
 use wgpu::BufferUsages;
-use wgpu::Color;
 use wgpu::ColorTargetState;
 use wgpu::ColorWrites;
 use wgpu::CommandEncoderDescriptor;
@@ -69,12 +69,13 @@ use wgpu::util::BufferInitDescriptor;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
+use crate::chunk::CHUNK_SIZE;
+use crate::chunk::Chunk;
 use crate::error::Error;
-use crate::map::Map;
 use crate::tile::Tile;
 
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
-const SPRITE_SIZE: u32 = 16;
+const TILE_SIZE: f32 = 16.0;
 
 const SQUARE_VERTICES: &[Vertex] = &[
     Vertex { position: [-1.0,  1.0] },
@@ -111,43 +112,98 @@ impl Vertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-struct Uniforms {
+struct Globals {
     resolution: [f32; 2],
-    map_width: i32,
-    map_height: i32,
-    sprite_size: i32,
+    tile_size: [f32; 2],
+    chunk_size: [f32; 2],
 }
 
-impl Uniforms {
+impl Globals {
     fn new(resolution: [f32; 2]) -> Self {
         Self {
             resolution,
-            map_width: 7,
-            map_height: 8,
-            sprite_size: SPRITE_SIZE as i32,
+            tile_size: [TILE_SIZE; 2],
+            chunk_size: [16.0; 2],
+        }
+    }
+}
+
+#[repr(C, align(1024))]
+#[derive(Clone, Copy, Debug, Zeroable)]
+struct ChunkLocals {
+    position: [f32; 2],
+    layout: [f32; CHUNK_SIZE * CHUNK_SIZE / 4],
+}
+
+impl ChunkLocals {
+    fn new() -> Self {
+        Self {
+            position: [0.0; 2],
+            layout: [0.0; 64],
+        }
+    }
+}
+
+#[repr(C, align(256))]
+#[derive(Clone, Copy, Debug, Zeroable)]
+struct EntityLocals {
+    position: [f32; 2],
+    atlas_position: [f32; 2],
+    color: f32,
+    detail: f32,
+}
+
+impl EntityLocals {
+    fn new() -> Self {
+        Self {
+            position: [0.0; 2],
+            atlas_position: [0.0; 2],
+            color: u32::MAX as f32,
+            detail: u32::MAX as f32,
+        }
+    }
+}
+
+#[repr(C, align(256))]
+#[derive(Clone, Copy, Debug, Zeroable)]
+struct LightingLocals {
+    position: [f32; 2],
+    color: f32,
+    magnitude: f32,
+}
+
+impl LightingLocals {
+    fn new() -> Self {
+        Self {
+            position: [0.0; 2],
+            color: u32::MAX as f32,
+            magnitude: 1.0,
         }
     }
 }
 
 pub struct Renderer {
-    _instance: Instance,
     surface: Surface,
-    _adapter: Adapter,
     device: Device,
     queue: Queue,
     surface_configuration: SurfaceConfiguration,
-    uniform_buffer: Buffer,
-    map_view: TextureView,
-    drawing_bind_group: BindGroup,
-    drawing_pipeline: RenderPipeline,
-    lighting_bind_group: BindGroup,
+    chunk_pipeline: RenderPipeline,
+    entity_pipeline: RenderPipeline,
     lighting_pipeline: RenderPipeline,
     vertex_buffer: Buffer,
     index_buffer: Buffer,
+    globals: Buffer,
+    chunk_locals: Buffer,
+    entity_locals: Buffer,
+    lighting_locals: Buffer,
+    chunk_bind_group: BindGroup,
+    entity_bind_group: BindGroup,
+    unlit_view: TextureView,
+    lighting_bind_group: BindGroup,
 }
 
 impl Renderer {
-    pub async fn new(window: &winit::window::Window) -> Result<Self, Error> {
+    pub async fn new(window: &winit::window::Window, chunk: &Chunk) -> Result<Self, Error> {
         let instance = Instance::new(Backends::PRIMARY);
 
         let surface = unsafe { instance.create_surface(window) };
@@ -182,109 +238,58 @@ impl Renderer {
         };
         surface.configure(&device, &surface_configuration);
 
-        let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("uniform_buffer"),
-            contents: bytemuck::bytes_of(&Uniforms::new([resolution.width as f32, resolution.height as f32])),
-            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        let chunk_shader = device.create_shader_module(&ShaderModuleDescriptor {
+            label: Some("chunk_shader"),
+            source: ShaderSource::Wgsl(include_str!("shaders/chunk.wgsl").into()),
         });
 
-        let (sprite_atlas_data, sprite_atlas_size) = sprite_atlas();
-        let sprite_atlas = device.create_texture(&TextureDescriptor {
-            label: Some("sprite_atlas"),
-            size: sprite_atlas_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
+        let entity_shader = device.create_shader_module(&ShaderModuleDescriptor {
+            label: Some("entity_shader"),
+            source: ShaderSource::Wgsl(include_str!("shaders/entity.wgsl").into()),
         });
 
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &sprite_atlas,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+        let lighting_shader = device.create_shader_module(&ShaderModuleDescriptor {
+            label: Some("lighting_shader"),
+            source: ShaderSource::Wgsl(include_str!("shaders/lighting.wgsl").into()),
+        });
+
+        let globals_bind_group_layout_entry = BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: BufferSize::new(std::mem::size_of::<Globals>() as _),
             },
-            &sprite_atlas_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(sprite_atlas_size.width * TEXTURE_FORMAT.describe().block_size as u32),
-                rows_per_image: None,
-            },
-            sprite_atlas_size,
-        );
-
-        let sprite_atlas_view = sprite_atlas.create_view(&TextureViewDescriptor {
-            label: Some("sprite_atlas_view"),
-            format: Some(TEXTURE_FORMAT),
-            dimension: Some(TextureViewDimension::D2),
-            aspect: TextureAspect::All,
-            ..Default::default()
-        });
-
-        let tile_atlas = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("tile_atlas"),
-            contents: bytemuck::cast_slice(&Tile::render_atlas()),
-            usage: BufferUsages::STORAGE,
-        });
-
-        let map = {
-            use Tile::*;
-
-            Map::new(
-                vec![
-                    [Stone, Stone, Stone, Stone, Stone, Stone, Stone],
-                    [Brick, Brick, Brick, Brick, Stone, Stone, Stone],
-                    [Stone,  Void,  Void, Stone,  Void,  Void, Stone],
-                    [Stone,  Void,  Void,  Void,  Void,  Void, Stone],
-                    [Stone, Stone,  Void,  Player,  Void,  Void, Stone],
-                    [Stone, Stone,  Void,  Void,  Void,  Void, Stone],
-                    [Stone, Stone, Stone,  Void,  Void, Stone, Stone],
-                    [Stone, Stone, Stone, Stone, Stone, Stone, Stone],
-                ],
-                vec![],
-            )
+            count: None,
         };
 
-        let scene_layout = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("scene_layout"),
-            contents: bytemuck::cast_slice(&map.layout()),
-            usage: BufferUsages::STORAGE,
-        });
-
-        let game_shader = device.create_shader_module(&ShaderModuleDescriptor {
-            label: Some("shader"),
-            source: ShaderSource::Wgsl(include_str!("shaders/game.wgsl").into()),
-        });
-
-        let map_texture = device.create_texture(&TextureDescriptor {
-            label: Some("map_texture"),
-            size: Extent3d { width: 7 * SPRITE_SIZE, height: 8 * SPRITE_SIZE, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
-        });
-
-        let map_view = map_texture.create_view(&TextureViewDescriptor::default());
-
-        let drawing_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("drawing_bind_group_layout"),
+        let chunk_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("chunk_bind_group_layout"),
             entries: &[
+                globals_bind_group_layout_entry,
                 BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: 1,
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: BufferSize::new(std::mem::size_of::<ChunkLocals>() as _),
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
                 BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 3,
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Texture {
                         multisampled: false,
@@ -293,101 +298,52 @@ impl Renderer {
                     },
                     count: None,
                 },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage {
-                            read_only: true,
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage {
-                            read_only: true,
-                        },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
 
-        let drawing_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("drawing_bind_group"),
-            layout: &drawing_bind_group_layout,
+        let entity_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("entity_bind_group_layout"),
             entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
+                globals_bind_group_layout_entry,
+                BindGroupLayoutEntry {
                     binding: 1,
-                    resource: BindingResource::TextureView(&sprite_atlas_view),
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: BufferSize::new(std::mem::size_of::<EntityLocals>() as _),
+                    },
+                    count: None,
                 },
-                BindGroupEntry {
+                BindGroupLayoutEntry {
                     binding: 2,
-                    resource: tile_atlas.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: scene_layout.as_entire_binding(),
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: TextureViewDimension::D2,
+                        sample_type: TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
                 },
             ],
-        });
-
-        let drawing_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("drawing_pipeline_layout"),
-            bind_group_layouts: &[&drawing_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let drawing_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("drawing_pipeline"),
-            layout: Some(&drawing_pipeline_layout),
-            vertex: VertexState {
-                module: &game_shader,
-                entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
-            },
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: FrontFace::Cw,
-                cull_mode: Some(Face::Back),
-                clamp_depth: false,
-                polygon_mode: PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(FragmentState {
-                module: &game_shader,
-                entry_point: "draw_map",
-                targets: &[ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: Some(BlendState::ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                }],
-            }),
         });
 
         let lighting_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("lighting_bind_group_layout"),
             entries: &[
+                globals_bind_group_layout_entry,
                 BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: BufferSize::new(std::mem::size_of::<LightingLocals>() as _),
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Texture {
                         multisampled: false,
@@ -399,15 +355,16 @@ impl Renderer {
             ],
         });
 
-        let lighting_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("lighting_bind_group"),
-            layout: &lighting_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&map_view),
-                },
-            ],
+        let chunk_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("chunk_pipeline_layout"),
+            bind_group_layouts: &[&chunk_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let entity_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("entity_pipeline_layout"),
+            bind_group_layouts: &[&entity_bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let lighting_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -416,11 +373,11 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let lighting_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("lighting_pipeline"),
-            layout: Some(&lighting_pipeline_layout),
+        let chunk_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("chunk_pipeline"),
+            layout: Some(&chunk_pipeline_layout),
             vertex: VertexState {
-                module: &game_shader,
+                module: &chunk_shader,
                 entry_point: "vs_main",
                 buffers: &[Vertex::desc()],
             },
@@ -440,11 +397,79 @@ impl Renderer {
                 alpha_to_coverage_enabled: false,
             },
             fragment: Some(FragmentState {
-                module: &game_shader,
-                entry_point: "draw_light",
+                module: &chunk_shader,
+                entry_point: "fs_main",
                 targets: &[ColorTargetState {
                     format: TEXTURE_FORMAT,
-                    blend: Some(BlendState::REPLACE),
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                }],
+            }),
+        });
+
+        let entity_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("entity_pipeline"),
+            layout: Some(&entity_pipeline_layout),
+            vertex: VertexState {
+                module: &entity_shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::desc()],
+            },
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Cw,
+                cull_mode: Some(Face::Back),
+                clamp_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(FragmentState {
+                module: &entity_shader,
+                entry_point: "fs_main",
+                targets: &[ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                }],
+            }),
+        });
+
+        let lighting_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("lighting_pipeline"),
+            layout: Some(&lighting_pipeline_layout),
+            vertex: VertexState {
+                module: &lighting_shader,
+                entry_point: "vs_main",
+                buffers: &[Vertex::desc()],
+            },
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Cw,
+                cull_mode: Some(Face::Back),
+                clamp_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(FragmentState {
+                module: &lighting_shader,
+                entry_point: "fs_main",
+                targets: &[ColorTargetState {
+                    format: TEXTURE_FORMAT,
+                    blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 }],
             }),
@@ -462,25 +487,257 @@ impl Renderer {
             usage: BufferUsages::INDEX,
         });
 
+        let globals = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("globals"),
+            contents: bytemuck::bytes_of(&Globals::new([resolution.width as f32, resolution.height as f32])),
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        });
+
+        let chunk_locals = vec![ChunkLocals::new()];
+        let chunk_locals = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("chunk_locals"),
+            contents: unsafe {
+                std::slice::from_raw_parts(
+                    chunk_locals.as_ptr() as *const u8,
+                    chunk_locals.len() * std::mem::size_of::<ChunkLocals>(),
+                )
+            },
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        });
+
+        let entity_locals = vec![EntityLocals::new()];
+        let entity_locals = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("entity_locals"),
+            contents: unsafe {
+                std::slice::from_raw_parts(
+                    entity_locals.as_ptr() as *const u8,
+                    entity_locals.len() * std::mem::size_of::<EntityLocals>(),
+                )
+            },
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        });
+
+        let lighting_locals = vec![LightingLocals::new()];
+        let lighting_locals = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("lighting_locals"),
+            contents: unsafe {
+                std::slice::from_raw_parts(
+                    lighting_locals.as_ptr() as *const u8,
+                    lighting_locals.len() * std::mem::size_of::<EntityLocals>(),
+                )
+            },
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        });
+
+        let globals_bind_group_entry = BindGroupEntry {
+            binding: 0,
+            resource: globals.as_entire_binding(),
+        };
+
+        let tile_data_atlas = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("tile_atlas"),
+            contents: bytemuck::cast_slice(&Tile::render_atlas()),
+            usage: BufferUsages::STORAGE,
+        });
+
+        let (tile_atlas_data, tile_atlas_size) = tile_atlas();
+        let tile_atlas = device.create_texture(&TextureDescriptor {
+            label: Some("tile_atlas"),
+            size: tile_atlas_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TEXTURE_FORMAT,
+            usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tile_atlas,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &tile_atlas_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: NonZeroU32::new(tile_atlas_size.width * TEXTURE_FORMAT.describe().block_size as u32),
+                rows_per_image: None,
+            },
+            tile_atlas_size,
+        );
+
+        let tile_atlas_view = tile_atlas.create_view(&TextureViewDescriptor {
+            label: Some("tile_atlas_view"),
+            format: Some(TEXTURE_FORMAT),
+            dimension: Some(TextureViewDimension::D2),
+            aspect: TextureAspect::All,
+            ..Default::default()
+        });
+
+        let chunk_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("drawing_bind_group"),
+            layout: &chunk_bind_group_layout,
+            entries: &[
+                globals_bind_group_entry.clone(),
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &chunk_locals,
+                        offset: 0,
+                        size: BufferSize::new(std::mem::size_of::<ChunkLocals>() as _),
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: tile_data_atlas.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&tile_atlas_view),
+                },
+            ],
+        });
+
+        let (entity_atlas_data, entity_atlas_size) = entity_atlas();
+        let entity_atlas = device.create_texture(&TextureDescriptor {
+            label: Some("entity_atlas"),
+            size: entity_atlas_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TEXTURE_FORMAT,
+            usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &entity_atlas,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &entity_atlas_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: NonZeroU32::new(entity_atlas_size.width * TEXTURE_FORMAT.describe().block_size as u32),
+                rows_per_image: None,
+            },
+            entity_atlas_size,
+        );
+
+        let entity_atlas_view = entity_atlas.create_view(&TextureViewDescriptor {
+            label: Some("entity_atlas_view"),
+            format: Some(TEXTURE_FORMAT),
+            dimension: Some(TextureViewDimension::D2),
+            aspect: TextureAspect::All,
+            ..Default::default()
+        });
+
+        let entity_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("entity_bind_group"),
+            layout: &chunk_bind_group_layout,
+            entries: &[
+                globals_bind_group_entry.clone(),
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &entity_locals,
+                        offset: 0,
+                        size: BufferSize::new(std::mem::size_of::<EntityLocals>() as _),
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&entity_atlas_view),
+                },
+            ],
+        });
+
+        let unlit_texture = device.create_texture(&TextureDescriptor {
+            label: Some("unlit_texture"),
+            size: Extent3d { width: resolution.width, height: resolution.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TEXTURE_FORMAT,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+        });
+
+        let unlit_view = unlit_texture.create_view(&TextureViewDescriptor::default());
+
+        let lighting_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("lighting_bind_group"),
+            layout: &lighting_bind_group_layout,
+            entries: &[
+                globals_bind_group_entry,
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &lighting_locals,
+                        offset: 0,
+                        size: BufferSize::new(std::mem::size_of::<LightingLocals>() as _),
+                    }),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&unlit_view),
+                },
+            ],
+        });
+
         Ok(Self {
-            _instance: instance,
             surface,
-            _adapter: adapter,
             device,
             queue,
             surface_configuration,
-            uniform_buffer,
-            map_view,
-            drawing_bind_group,
-            drawing_pipeline,
-            lighting_bind_group,
+            chunk_pipeline,
+            entity_pipeline,
             lighting_pipeline,
             vertex_buffer,
             index_buffer,
+            globals,
+            chunk_locals,
+            entity_locals,
+            lighting_locals,
+            chunk_bind_group,
+            entity_bind_group,
+            unlit_view,
+            lighting_bind_group,
         })
     }
 
     pub fn render(&self) -> Result<(), Error> {
+        let mut command_encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("command_encoder")
+        });
+
+        {
+            let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("first_pass"),
+                color_attachments: &[RenderPassColorAttachment {
+                    view: &self.unlit_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color { r: 0.01, g: 0.01, b: 0.01, a: 1.0 }),
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: None,
+            });
+
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+
+            render_pass.set_pipeline(&self.chunk_pipeline);
+            render_pass.set_bind_group(0, &self.chunk_bind_group, &[0]);
+            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+
+            render_pass.set_pipeline(&self.entity_pipeline);
+            render_pass.set_bind_group(0, &self.entity_bind_group, &[0]);
+            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+        }
+
         let current_texture = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => match e {
@@ -499,50 +756,26 @@ impl Renderer {
 
         let view = current_texture.texture.create_view(&TextureViewDescriptor::default());
 
-        let mut command_encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("command_encoder")
-        });
-
         {
-            let mut drawing_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("render_pass"),
-                color_attachments: &[RenderPassColorAttachment {
-                    view: &self.map_view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(Color { r: 0.01, g: 0.01, b: 0.01, a: 1.0 }),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-
-            drawing_pass.set_pipeline(&self.drawing_pipeline);
-            drawing_pass.set_bind_group(0, &self.drawing_bind_group, &[]);
-            drawing_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            drawing_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
-            drawing_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
-        }
-
-        {
-            let mut lighting_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("render_pass"),
+            let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("second_pass"),
                 color_attachments: &[RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color { r: 0.01, g: 0.01, b: 0.01, a: 1.0 }),
+                        load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
                         store: true,
                     },
                 }],
                 depth_stencil_attachment: None,
             });
 
-            lighting_pass.set_pipeline(&self.lighting_pipeline);
-            lighting_pass.set_bind_group(0, &self.lighting_bind_group, &[]);
-            lighting_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            lighting_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
-            lighting_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+
+            render_pass.set_pipeline(&self.lighting_pipeline);
+            render_pass.set_bind_group(0, &self.lighting_bind_group, &[0]);
+            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
         }
 
         self.queue.submit([command_encoder.finish()]);
@@ -557,16 +790,23 @@ impl Renderer {
         self.surface_configuration.height = resolution.height;
         self.surface.configure(&self.device, &self.surface_configuration);
 
-        self.queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&Uniforms::new([resolution.width as f32, resolution.height as f32])),
-        );
+        self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&Globals::new([resolution.width as f32, resolution.height as f32])));
     }
 }
 
-fn sprite_atlas() -> (Vec<u8>, Extent3d) {
+fn tile_atlas() -> (Vec<u8>, Extent3d) {
     let bytes = include_bytes!("textures/tiles.gif");
+    let decoder = GifDecoder::new(&bytes[..]).unwrap();
+    let dimensions = decoder.dimensions();
+
+    let mut buf = vec![0; decoder.total_bytes() as usize];
+    decoder.read_image(&mut buf).unwrap();
+
+    (buf, Extent3d { width: dimensions.0, height: dimensions.1, depth_or_array_layers: 1 })
+}
+
+fn entity_atlas() -> (Vec<u8>, Extent3d) {
+    let bytes = include_bytes!("textures/entities.gif");
     let decoder = GifDecoder::new(&bytes[..]).unwrap();
     let dimensions = decoder.dimensions();
 

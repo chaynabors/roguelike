@@ -3,7 +3,7 @@ use bytemuck::Zeroable;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[repr(C, align(4))]
+#[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Deserialize, Pod, Serialize, Zeroable)]
 pub struct Color {
     pub r: u8,

@@ -1,12 +1,11 @@
 mod camera;
+mod chunk;
 mod color;
 mod error;
 mod light;
-mod map;
 mod tile;
 mod player;
 mod renderer;
-mod state;
 mod vector2;
 
 use std::io::Write;
@@ -22,8 +21,13 @@ use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
+use crate::chunk::Chunk;
+use crate::color::Color;
 use crate::error::Error;
+use crate::light::Light;
 use crate::renderer::Renderer;
+use crate::tile::Tile;
+use crate::vector2::Vector2;
 
 #[tokio::main]
 async fn main() -> Result<(), crate::error::Error> {
@@ -51,8 +55,19 @@ async fn main() -> Result<(), crate::error::Error> {
     };
     info!("Created event loop and window");
 
+    info!("Creating test chunk");
+    let chunk = Chunk {
+        layout: [[Tile::Void; 16]; 16],
+        lights: vec![
+            (Light::new(Color::new(255, 0, 0), 1.0), Vector2::new(1.2, 1.2)),
+            (Light::new(Color::new(0, 255, 0), 1.0), Vector2::new(5.2, 5.2)),
+            (Light::new(Color::new(0, 0, 255), 1.0), Vector2::new(5.2, 1.2)),
+        ],
+    };
+    info!("Created test chunk");
+
     info!("Creating renderer");
-    let mut renderer = match Renderer::new(&window).await {
+    let mut renderer = match Renderer::new(&window, &chunk).await {
         Ok(renderer) => renderer,
         Err(e) => return Err(e),
     };
@@ -66,7 +81,7 @@ async fn main() -> Result<(), crate::error::Error> {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Resized(size) => renderer.resize(size),
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => renderer.resize(*new_inner_size), 
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => renderer.resize(*new_inner_size),
                 _ => (),
             },
             Event::RedrawRequested(_) => if let Err(e) = renderer.render() { match e {

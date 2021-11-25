@@ -1,14 +1,20 @@
+use bytemuck::Zeroable;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::color::Color;
-use crate::vector2::Vector2;
 
-#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize)]
+#[repr(C, align(256))]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Serialize, Zeroable)]
 pub struct Light {
-    position: Vector2,
     color: Color,
-    luminosity: f32,
+    magnitude: f32,
+}
+
+impl Light {
+    pub fn new(color: Color, magnitude: f32) -> Self {
+        Self { color, magnitude }
+    }
 }
 
 #[cfg(test)]
@@ -18,7 +24,7 @@ mod tests {
     #[test]
     fn serialization() {
         let light = Light::default();
-        let serialized = serde_json::to_string_pretty(&light).unwrap();    
+        let serialized = serde_json::to_string_pretty(&light).unwrap();
         serde_json::from_str::<Light>(&serialized).unwrap();
     }
 }

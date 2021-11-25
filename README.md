@@ -1,5 +1,14 @@
 # roguelike
-A game about exploring with friends... with graphics not *too* far from DOS.
+Let me tell you a story...
+
+
+
+
+
+
+your story.
+
+A game about exploring with friends... with graphics both very far and not *too* far from DOS.
 
 
 ## Todo
@@ -11,9 +20,9 @@ A game about exploring with friends... with graphics not *too* far from DOS.
     - [x] Screen Clearing
     - [x] Tile rendering
     - [x] Simple distance lighting
-    - [ ] Colored lights
+    - [x] Colored lights
     - [ ] Arbitrarily numbered lights
-    - [ ] Chained tile rendering
+    - [ ] Chained tiles rendering
     - [ ] Light dropoff on wall penetration
 * Audio
     - [ ] Simple audio playback
@@ -24,43 +33,9 @@ A game about exploring with friends... with graphics not *too* far from DOS.
 * Content
     - [ ] Procedural map generation
     - [ ] Primitive set of sounds
-    ~~- [ ] Character set (font)~~
+    - [ ] Font
     - [x] 2 color spritesheet with alpha
 * Gameplay
     - [ ] Collision detection/resolution
     - [ ] Character controller
     - [ ] Character customization
-
-
-## Type Definitions
-Map:
-* layout: Vec<Material>
-* lights: Vec<Light>
-
-Material:
-* Enum
-
-Light:
-* position: Vector2
-* color: Color
-* luminosity: float
-
-Vector2:
-* x: float
-* y: float
-
-Color:
-* r: float
-* g: float
-* b: float
-
-Camera:
-* position: Vector2
-
-Player:
-* position: Vector2
-
-State:
-* map: Map
-* camera: Camera
-* player: Player
