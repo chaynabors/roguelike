@@ -20,7 +20,7 @@ struct Globals {
 
 [[block]]
 struct Locals {
-    chunk_position: vec2<u32>;
+    chunk_position: vec2<i32>;
     [[align(16)]] chunk_layout: [[stride(16)]] array<u32, 64u>;
 };
 
@@ -46,7 +46,7 @@ fn vs_main(
     var out: VertexOutput;
     let pixels_per_chunk = globals.tile_size * globals.chunk_size;
     let half_tile_offset = 1.0 / f32(globals.tile_size);
-    let position_offset = vec2<f32>(1.0 - half_tile_offset, -1.0 + half_tile_offset) + vec2<f32>(locals.chunk_position);
+    let position_offset = vec2<f32>(1.0 - half_tile_offset, -1.0 + half_tile_offset) + vec2<f32>(locals.chunk_position) * 2.0;
     let position = (position + position_offset) / vec2<f32>(globals.resolution) * f32(pixels_per_chunk);
     out.position = vec4<f32>(position, 0.0, 1.0);
     out.tex_coords = tex_coords * f32(globals.chunk_size);
