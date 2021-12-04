@@ -11,13 +11,13 @@ use crate::color::Color;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct TileData {
-    atlas_position: [i32; 2], // 32 * 2
+    atlas_position: [u32; 2], // 32 * 2
     color: Color,
     detail: Color,
 }
 
 impl TileData {
-    fn new(atlas_position: [i32; 2], color: Color, detail: Option<Color>) -> Self {
+    fn new(atlas_position: [u32; 2], color: Color, detail: Option<Color>) -> Self {
         Self {
             atlas_position,
             color,

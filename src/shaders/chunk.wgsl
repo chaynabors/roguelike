@@ -1,27 +1,32 @@
 let BITS_PER_BYTE: u32 = 8u;
 
+struct VertexOutput {
+    [[builtin(position)]] position: vec4<f32>;
+    [[location(1)]] tex_coords: vec2<f32>;
+};
+
 struct TileData {
-    atlas_position: vec2<f32>;
-    color: f32;
-    detail: f32;
+    atlas_position: vec2<u32>;
+    color: u32;
+    detail: u32;
 };
 
 [[block]]
 struct Globals {
-    resolution: vec2<f32>;
-    tile_size: vec2<f32>;
-    chunk_size: vec2<f32>;
+    resolution: vec2<u32>;
+    tile_size: u32;
+    chunk_size: u32;
 };
 
 [[block]]
 struct Locals {
-    chunk_position: vec2<f32>;
-    chunk_layout: array<f32, 64>;
+    chunk_position: vec2<u32>;
+    [[align(16)]] chunk_layout: [[stride(16)]] array<u32, 64u>;
 };
 
 [[block]]
 struct TileDataAtlas {
-    data: array<TileData, 256>;
+    data: array<TileData, 256u>;
 };
 
 [[group(0), binding(0)]]
@@ -36,28 +41,34 @@ var tile_atlas: texture_2d<f32>;
 [[stage(vertex)]]
 fn vs_main(
     [[location(0)]] position: vec2<f32>,
-) -> [[builtin(position)]] vec4<f32> {
+    [[location(1)]] tex_coords: vec2<f32>,
+) -> VertexOutput {
+    var out: VertexOutput;
     let pixels_per_chunk = globals.tile_size * globals.chunk_size;
-    let chunks_per_screen = globals.resolution / pixels_per_chunk;
-    return vec4<f32>(position / globals.resolution * pixels_per_chunk + (locals.chunk_position / chunks_per_screen + 0.5), 0.0, 1.0);
+    let half_tile_offset = 1.0 / f32(globals.tile_size);
+    let position_offset = vec2<f32>(1.0 - half_tile_offset, -1.0 + half_tile_offset) + vec2<f32>(locals.chunk_position);
+    let position = (position + position_offset) / vec2<f32>(globals.resolution) * f32(pixels_per_chunk);
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.tex_coords = tex_coords * f32(globals.chunk_size);
+    return out;
 }
 
 [[stage(fragment)]]
-fn fs_main(
-    [[builtin(position)]] position: vec4<f32>,
-) -> [[location(0)]] vec4<f32> {
-    let tiles_per_byte = globals.chunk_size.x * globals.chunk_size.y / arrayLength(locals.chunk_layout);
-    let tile_index = position.xy / globals.tile_size % globals.chunk_size;
-    var tile = locals.chunk_layout[i32(tile_index.x + tile_index.y * globals.chunk_size.x / tiles_per_byte)];
-    tile = tile >> i32(tile_index % locals.tiles_per_byte) * BITS_PER_BYTE & 0xff;
+fn fs_main(in: VertexOutput) -> [[location(0)]] vec4<f32> {
+    let tile_index = vec2<u32>(in.tex_coords);
+    let linear_tile_index = tile_index.x + tile_index.y * globals.chunk_size;
+    var tile = locals.chunk_layout[linear_tile_index / 4u];
+    tile = (tile >> (24u - linear_tile_index * BITS_PER_BYTE)) & 0xffu;
 
     let tile_data = tile_data_atlas.data[tile];
-    let tile_position = tile_data.atlas_position * globals.tile_size;
+    let tile_position = tile_data.atlas_position;
     let tile_color = unpack4x8unorm(tile_data.color);
     let tile_detail = unpack4x8unorm(tile_data.detail);
 
-    let raw_color = textureLoad(tile_atlas, vec2<i32>(position % globals.tile_size + tile_position), 0);
+    let pixels_per_chunk = globals.tile_size * globals.chunk_size;
+    let atlas_position = vec2<i32>((in.tex_coords % 1.0 + vec2<f32>(tile_position)) * f32(globals.tile_size));
+    let raw_color = textureLoad(tile_atlas, atlas_position, 0);
     var color = raw_color * tile_color;
-    color = color + vec4<f32>(1.0 - raw_color.rgb, raw_color.a) * tile_detail;
+    color = color + vec4<f32>(1.0 - raw_color.rgb, 1.0) * tile_detail;
     return color;
 }

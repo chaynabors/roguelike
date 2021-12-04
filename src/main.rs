@@ -67,7 +67,7 @@ async fn main() -> Result<(), crate::error::Error> {
     info!("Created test chunk");
 
     info!("Creating renderer");
-    let mut renderer = match Renderer::new(&window, &chunk).await {
+    let mut renderer = match Renderer::new(&window).await {
         Ok(renderer) => renderer,
         Err(e) => return Err(e),
     };

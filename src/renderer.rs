@@ -9,10 +9,14 @@ use wgpu::Backends;
 use wgpu::BindGroup;
 use wgpu::BindGroupDescriptor;
 use wgpu::BindGroupEntry;
+use wgpu::BindGroupLayout;
 use wgpu::BindGroupLayoutDescriptor;
 use wgpu::BindGroupLayoutEntry;
 use wgpu::BindingResource;
 use wgpu::BindingType;
+use wgpu::BlendComponent;
+use wgpu::BlendFactor;
+use wgpu::BlendOperation;
 use wgpu::BlendState;
 use wgpu::Buffer;
 use wgpu::BufferBinding;
@@ -70,18 +74,17 @@ use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
 use crate::chunk::CHUNK_SIZE;
-use crate::chunk::Chunk;
 use crate::error::Error;
 use crate::tile::Tile;
 
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
-const TILE_SIZE: f32 = 16.0;
+const TILE_SIZE: u32 = 16;
 
 const SQUARE_VERTICES: &[Vertex] = &[
-    Vertex { position: [-1.0,  1.0] },
-    Vertex { position: [ 1.0,  1.0] },
-    Vertex { position: [-1.0, -1.0] },
-    Vertex { position: [ 1.0, -1.0] },
+    Vertex { position: [-1.0, 1.0], tex_coord: [0.0, 0.0] },
+    Vertex { position: [1.0, 1.0], tex_coord: [1.0, 0.0] },
+    Vertex { position: [-1.0, -1.0], tex_coord: [0.0, 1.0] },
+    Vertex { position: [1.0, -1.0], tex_coord: [1.0, 1.0] },
 ];
 
 const SQUARE_INDICES: &[u16] = &[
@@ -92,6 +95,7 @@ const SQUARE_INDICES: &[u16] = &[
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex {
     position: [f32; 2],
+    tex_coord: [f32; 2],
 }
 
 impl Vertex {
@@ -105,6 +109,11 @@ impl Vertex {
                     shader_location: 0,
                     format: VertexFormat::Float32x2,
                 },
+                VertexAttribute {
+                    offset: 4 * 2,
+                    shader_location: 1,
+                    format: VertexFormat::Float32x2,
+                },
             ],
         }
     }
@@ -113,33 +122,52 @@ impl Vertex {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 struct Globals {
-    resolution: [f32; 2],
-    tile_size: [f32; 2],
-    chunk_size: [f32; 2],
+    resolution: [u32; 2],
+    tile_size: u32,
+    chunk_size: u32,
 }
 
 impl Globals {
-    fn new(resolution: [f32; 2]) -> Self {
+    fn new(resolution: [u32; 2]) -> Self {
         Self {
             resolution,
-            tile_size: [TILE_SIZE; 2],
-            chunk_size: [16.0; 2],
+            tile_size: TILE_SIZE,
+            chunk_size: CHUNK_SIZE,
         }
     }
 }
 
-#[repr(C, align(1024))]
+#[repr(C, align(2048))]
 #[derive(Clone, Copy, Debug, Zeroable)]
 struct ChunkLocals {
-    position: [f32; 2],
-    layout: [f32; CHUNK_SIZE * CHUNK_SIZE / 4],
+    position: [u32; 2],
+    _pad1: [u8; 8],
+    layout: [u128; (CHUNK_SIZE * CHUNK_SIZE / 4) as usize],
 }
 
 impl ChunkLocals {
     fn new() -> Self {
         Self {
-            position: [0.0; 2],
-            layout: [0.0; 64],
+            position: [0, 0],
+            _pad1: [0; 8],
+            layout: [
+                0x81818181, 0x81818181, 0x81818181, 0x81818181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0x81808180, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0x81808180, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0x81818181, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81810000, 0, 0, 0x00008181,
+                0x81818181, 0x81818181, 0x81818181, 0x81818181,
+            ],
         }
     }
 }
@@ -147,19 +175,19 @@ impl ChunkLocals {
 #[repr(C, align(256))]
 #[derive(Clone, Copy, Debug, Zeroable)]
 struct EntityLocals {
-    position: [f32; 2],
-    atlas_position: [f32; 2],
-    color: f32,
-    detail: f32,
+    position: [u32; 2],
+    atlas_position: [u32; 2],
+    color: u32,
+    detail: u32,
 }
 
 impl EntityLocals {
     fn new() -> Self {
         Self {
-            position: [0.0; 2],
-            atlas_position: [0.0; 2],
-            color: u32::MAX as f32,
-            detail: u32::MAX as f32,
+            position: [0, 0],
+            atlas_position: [0, 0],
+            color: u32::MAX,
+            detail: u32::MAX,
         }
     }
 }
@@ -168,17 +196,29 @@ impl EntityLocals {
 #[derive(Clone, Copy, Debug, Zeroable)]
 struct LightingLocals {
     position: [f32; 2],
-    color: f32,
+    color: u32,
     magnitude: f32,
 }
 
 impl LightingLocals {
-    fn new() -> Self {
-        Self {
-            position: [0.0; 2],
-            color: u32::MAX as f32,
-            magnitude: 1.0,
-        }
+    fn new() -> [Self; 3] {
+        [
+            Self {
+                position: [0.0, 0.0],
+                color: 0x000000ff,
+                magnitude: 1.0,
+            },
+            Self {
+                position: [1.0, 0.0],
+                color: 0x00ff0000,
+                magnitude: 1.0,
+            },
+            Self {
+                position: [0.5, 1.0],
+                color: 0x0000ff00,
+                magnitude: 1.0,
+            },
+        ]
     }
 }
 
@@ -187,6 +227,7 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     surface_configuration: SurfaceConfiguration,
+    lighting_bind_group_layout: BindGroupLayout,
     chunk_pipeline: RenderPipeline,
     entity_pipeline: RenderPipeline,
     lighting_pipeline: RenderPipeline,
@@ -203,7 +244,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: &winit::window::Window, chunk: &Chunk) -> Result<Self, Error> {
+    pub async fn new(window: &winit::window::Window) -> Result<Self, Error> {
+        println!("{}", std::mem::size_of::<ChunkLocals>());
+
         let instance = Instance::new(Backends::PRIMARY);
 
         let surface = unsafe { instance.create_surface(window) };
@@ -270,7 +313,7 @@ impl Renderer {
                 globals_bind_group_layout_entry,
                 BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: true,
@@ -307,7 +350,7 @@ impl Renderer {
                 globals_bind_group_layout_entry,
                 BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: ShaderStages::FRAGMENT,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: true,
@@ -469,7 +512,14 @@ impl Renderer {
                 entry_point: "fs_main",
                 targets: &[ColorTargetState {
                     format: TEXTURE_FORMAT,
-                    blend: Some(BlendState::ALPHA_BLENDING),
+                    blend: Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent::REPLACE,
+                    }),
                     write_mask: ColorWrites::ALL,
                 }],
             }),
@@ -489,7 +539,7 @@ impl Renderer {
 
         let globals = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("globals"),
-            contents: bytemuck::bytes_of(&Globals::new([resolution.width as f32, resolution.height as f32])),
+            contents: bytemuck::bytes_of(&Globals::new([resolution.width, resolution.height])),
             usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
         });
 
@@ -517,22 +567,17 @@ impl Renderer {
             usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
         });
 
-        let lighting_locals = vec![LightingLocals::new()];
+        let lighting_locals = LightingLocals::new();
         let lighting_locals = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("lighting_locals"),
             contents: unsafe {
                 std::slice::from_raw_parts(
                     lighting_locals.as_ptr() as *const u8,
-                    lighting_locals.len() * std::mem::size_of::<EntityLocals>(),
+                    lighting_locals.len() * std::mem::size_of::<LightingLocals>(),
                 )
             },
             usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
         });
-
-        let globals_bind_group_entry = BindGroupEntry {
-            binding: 0,
-            resource: globals.as_entire_binding(),
-        };
 
         let tile_data_atlas = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("tile_atlas"),
@@ -579,7 +624,10 @@ impl Renderer {
             label: Some("drawing_bind_group"),
             layout: &chunk_bind_group_layout,
             entries: &[
-                globals_bind_group_entry.clone(),
+                BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
                 BindGroupEntry {
                     binding: 1,
                     resource: BindingResource::Buffer(BufferBinding {
@@ -636,9 +684,12 @@ impl Renderer {
 
         let entity_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("entity_bind_group"),
-            layout: &chunk_bind_group_layout,
+            layout: &entity_bind_group_layout,
             entries: &[
-                globals_bind_group_entry.clone(),
+                BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
                 BindGroupEntry {
                     binding: 1,
                     resource: BindingResource::Buffer(BufferBinding {
@@ -648,49 +699,28 @@ impl Renderer {
                     }),
                 },
                 BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: BindingResource::TextureView(&entity_atlas_view),
                 },
             ],
         });
 
-        let unlit_texture = device.create_texture(&TextureDescriptor {
-            label: Some("unlit_texture"),
-            size: Extent3d { width: resolution.width, height: resolution.height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
-        });
+        let unlit_view = unlit_view(&device, resolution);
 
-        let unlit_view = unlit_texture.create_view(&TextureViewDescriptor::default());
-
-        let lighting_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("lighting_bind_group"),
-            layout: &lighting_bind_group_layout,
-            entries: &[
-                globals_bind_group_entry,
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &lighting_locals,
-                        offset: 0,
-                        size: BufferSize::new(std::mem::size_of::<LightingLocals>() as _),
-                    }),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::TextureView(&unlit_view),
-                },
-            ],
-        });
+        let lighting_bind_group = lighting_bind_group(
+            &device,
+            &lighting_bind_group_layout,
+            &globals,
+            &lighting_locals,
+            &unlit_view
+        );
 
         Ok(Self {
             surface,
             device,
             queue,
             surface_configuration,
+            lighting_bind_group_layout,
             chunk_pipeline,
             entity_pipeline,
             lighting_pipeline,
@@ -708,36 +738,6 @@ impl Renderer {
     }
 
     pub fn render(&self) -> Result<(), Error> {
-        let mut command_encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("command_encoder")
-        });
-
-        {
-            let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("first_pass"),
-                color_attachments: &[RenderPassColorAttachment {
-                    view: &self.unlit_view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color { r: 0.01, g: 0.01, b: 0.01, a: 1.0 }),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
-
-            render_pass.set_pipeline(&self.chunk_pipeline);
-            render_pass.set_bind_group(0, &self.chunk_bind_group, &[0]);
-            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
-
-            render_pass.set_pipeline(&self.entity_pipeline);
-            render_pass.set_bind_group(0, &self.entity_bind_group, &[0]);
-            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
-        }
-
         let current_texture = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(e) => match e {
@@ -755,6 +755,36 @@ impl Renderer {
         };
 
         let view = current_texture.texture.create_view(&TextureViewDescriptor::default());
+
+        let mut command_encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("command_encoder")
+        });
+
+        {
+            let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("first_pass"),
+                color_attachments: &[RenderPassColorAttachment {
+                    view: &self.unlit_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }),
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: None,
+            });
+
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
+
+            render_pass.set_pipeline(&self.chunk_pipeline);
+            render_pass.set_bind_group(0, &self.chunk_bind_group, &[0]);
+            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+
+            render_pass.set_pipeline(&self.entity_pipeline);
+            render_pass.set_bind_group(0, &self.entity_bind_group, &[0]);
+            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+        }
 
         {
             let mut render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
@@ -774,8 +804,10 @@ impl Renderer {
             render_pass.set_index_buffer(self.index_buffer.slice(..), IndexFormat::Uint16);
 
             render_pass.set_pipeline(&self.lighting_pipeline);
-            render_pass.set_bind_group(0, &self.lighting_bind_group, &[0]);
-            render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+            for i in 0..3 {
+                render_pass.set_bind_group(0, &self.lighting_bind_group, &[i * std::mem::size_of::<LightingLocals>() as u32]);
+                render_pass.draw_indexed(0..SQUARE_INDICES.len() as u32, 0, 0..1);
+            }
         }
 
         self.queue.submit([command_encoder.finish()]);
@@ -789,8 +821,15 @@ impl Renderer {
         self.surface_configuration.width = resolution.width;
         self.surface_configuration.height = resolution.height;
         self.surface.configure(&self.device, &self.surface_configuration);
-
-        self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&Globals::new([resolution.width as f32, resolution.height as f32])));
+        self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&Globals::new([resolution.width, resolution.height])));
+        self.unlit_view = unlit_view(&self.device, resolution);
+        self.lighting_bind_group = lighting_bind_group(
+            &self.device,
+            &self.lighting_bind_group_layout,
+            &self.globals,
+            &self.lighting_locals,
+            &self.unlit_view
+        );
     }
 }
 
@@ -814,4 +853,49 @@ fn entity_atlas() -> (Vec<u8>, Extent3d) {
     decoder.read_image(&mut buf).unwrap();
 
     (buf, Extent3d { width: dimensions.0, height: dimensions.1, depth_or_array_layers: 1 })
+}
+
+fn unlit_view(device: &Device, resolution: PhysicalSize<u32>) -> TextureView {
+    let unlit_texture = device.create_texture(&TextureDescriptor {
+        label: Some("unlit_texture"),
+        size: Extent3d { width: resolution.width, height: resolution.height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TEXTURE_FORMAT,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+    });
+
+    unlit_texture.create_view(&TextureViewDescriptor::default())
+}
+
+fn lighting_bind_group(
+    device: &Device,
+    layout: &BindGroupLayout,
+    globals: &Buffer,
+    locals: &Buffer,
+    unlit_view: &TextureView,
+) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("lighting_bind_group"),
+        layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: globals.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: locals,
+                    offset: 0,
+                    size: BufferSize::new(std::mem::size_of::<LightingLocals>() as _),
+                }),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::TextureView(unlit_view),
+            },
+        ],
+    })
 }
