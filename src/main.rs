@@ -1,12 +1,12 @@
 mod camera;
 mod chunk;
-mod color;
+mod chunk_renderer;
 mod error;
 mod light;
 mod tile;
 mod player;
 mod renderer;
-mod vector2;
+mod world;
 
 use std::io::Write;
 
@@ -22,12 +22,10 @@ use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 
 use crate::chunk::Chunk;
-use crate::color::Color;
 use crate::error::Error;
 use crate::light::Light;
 use crate::renderer::Renderer;
 use crate::tile::Tile;
-use crate::vector2::Vector2;
 
 #[tokio::main]
 async fn main() -> Result<(), crate::error::Error> {
@@ -59,9 +57,10 @@ async fn main() -> Result<(), crate::error::Error> {
     let chunk = Chunk {
         layout: [[Tile::Void; 16]; 16],
         lights: vec![
-            (Light::new(Color::new(255, 0, 0), 1.0), Vector2::new(1.2, 1.2)),
-            (Light::new(Color::new(0, 255, 0), 1.0), Vector2::new(5.2, 5.2)),
-            (Light::new(Color::new(0, 0, 255), 1.0), Vector2::new(5.2, 1.2)),
+            Light::new([0, 0], [255, 0, 0], 255),
+            Light::new([255, 0], [0, 255, 0], 255),
+            Light::new([0, 255], [0, 0, 255], 255),
+            Light::new([255, 255], [255, 255, 255], 255),
         ],
     };
     info!("Created test chunk");

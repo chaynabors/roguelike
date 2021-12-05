@@ -6,23 +6,22 @@ use num_traits::FromPrimitive;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::color::Color;
+pub const TILE_SIZE: u32 = 16;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct TileData {
     atlas_position: [u32; 2], // 32 * 2
-    color: Color,
-    detail: Color,
+    color: [u8; 4],
+    detail: [u8; 4],
 }
 
 impl TileData {
-    fn new(atlas_position: [u32; 2], color: Color, detail: Option<Color>) -> Self {
+    fn new(atlas_position: [u32; 2], color: [u8; 4], detail: Option<[u8; 4]>) -> Self {
         Self {
             atlas_position,
             color,
             detail: detail.unwrap_or_default(),
-            ..Default::default()
         }
     }
 }
@@ -41,10 +40,10 @@ impl Tile {
     pub fn render_data(self) -> TileData {
         match self {
             Tile::Void => TileData::default(),
-            Tile::Solid => TileData::new([1, 0], Color::new(255, 255, 255), None),
-            Tile::Stone => TileData::new([2, 0], Color::new(156, 156, 162), None),
-            Tile::Brick => TileData::new([3, 0], Color::new(120, 8, 2), None),
-            Tile::Player => TileData::new([0, 1], Color::new(200, 0, 0), Some(Color::new(100, 70, 8))),
+            Tile::Solid => TileData::new([1, 0], [255, 255, 255, 255], None),
+            Tile::Stone => TileData::new([2, 0], [156, 156, 162, 255], None),
+            Tile::Brick => TileData::new([3, 0], [120, 8, 2, 255], None),
+            Tile::Player => TileData::new([0, 1], [200, 0, 0, 255], Some([100, 70, 8, 255])),
         }
     }
 

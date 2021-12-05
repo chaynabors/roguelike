@@ -23,6 +23,7 @@ use wgpu::BufferBinding;
 use wgpu::BufferBindingType;
 use wgpu::BufferSize;
 use wgpu::BufferUsages;
+use wgpu::Color;
 use wgpu::ColorTargetState;
 use wgpu::ColorWrites;
 use wgpu::CommandEncoderDescriptor;
@@ -75,10 +76,10 @@ use winit::dpi::PhysicalSize;
 
 use crate::chunk::CHUNK_SIZE;
 use crate::error::Error;
+use crate::tile::TILE_SIZE;
 use crate::tile::Tile;
 
 const TEXTURE_FORMAT: TextureFormat = TextureFormat::Bgra8UnormSrgb;
-const TILE_SIZE: u32 = 16;
 
 const SQUARE_VERTICES: &[Vertex] = &[
     Vertex { position: [-1.0, 1.0], tex_coord: [0.0, 0.0] },
@@ -278,12 +279,12 @@ impl LightingLocals {
             },
             Self {
                 position: [1.0, 0.0],
-                color: 0x00ff0000,
+                color: 0x0000ff00,
                 magnitude: 1.0,
             },
             Self {
                 position: [0.5, 1.0],
-                color: 0x0000ff00,
+                color: 0x00ff0000,
                 magnitude: 1.0,
             },
         ]
@@ -689,7 +690,7 @@ impl Renderer {
         });
 
         let chunk_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("drawing_bind_group"),
+            label: Some("chunk_bind_group"),
             layout: &chunk_bind_group_layout,
             entries: &[
                 BindGroupEntry {
@@ -835,7 +836,7 @@ impl Renderer {
                     view: &self.unlit_view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }),
+                        load: LoadOp::Clear(Color { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }),
                         store: true,
                     },
                 }],

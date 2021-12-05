@@ -1,16 +1,19 @@
 use serde::Deserialize;
 use serde::Serialize;
+use wgpu::Color;
 
 use crate::light::Light;
 use crate::tile::Tile;
-use crate::vector2::Vector2;
 
 pub const CHUNK_SIZE: u32 = 16;
+pub const CHUNK_CLEAR_COLOR: Color = Color { r: 0.05, g: 0.05, b: 0.05, a: 1.0 };
+
+pub type ChunkLayout = [[Tile; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Chunk {
-    pub layout: [[Tile; CHUNK_SIZE as usize]; CHUNK_SIZE as usize],
-    pub lights: Vec<(Light, Vector2)>,
+    pub layout: ChunkLayout,
+    pub lights: Vec<Light>,
 }
 
 #[cfg(test)]

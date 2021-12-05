@@ -1,11 +1,9 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::vector2::Vector2;
-
 #[derive(Copy, Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Camera {
-    position: Vector2,
+    position: [u32; 2],
 }
 
 #[cfg(test)]
