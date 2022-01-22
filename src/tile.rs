@@ -21,37 +21,33 @@ impl TileData {
         Self {
             atlas_position,
             color,
-            detail: detail.unwrap_or_default(),
+            detail: detail.unwrap_or(color),
         }
     }
 }
 
-#[repr(C, align(8))]
+#[repr(u8)]
 #[derive(Copy, Clone, Debug, Deserialize, FromPrimitive, Serialize, ToPrimitive)]
 pub enum Tile {
     Void = 0,
-    Player,
-    Solid = 128,
-    Stone,
-    Brick,
+    Wall,
+    Planks,
 }
 
 impl Tile {
-    pub fn render_data(self) -> TileData {
+    pub fn data(self) -> TileData {
         match self {
-            Tile::Void => TileData::default(),
-            Tile::Solid => TileData::new([1, 0], [255, 255, 255, 255], None),
-            Tile::Stone => TileData::new([2, 0], [156, 156, 162, 255], None),
-            Tile::Brick => TileData::new([3, 0], [120, 8, 2, 255], None),
-            Tile::Player => TileData::new([0, 1], [200, 0, 0, 255], Some([100, 70, 8, 255])),
+            Tile::Wall => TileData::new([0, 1], [255, 255, 255, 255], Some([0, 0, 255, 255])),
+            Tile::Planks => TileData::new([2, 1], [255, 255, 255, 255], Some([220, 220, 220, 255])),
+            _ => TileData::default(),
         }
     }
 
-    pub fn render_atlas() -> [TileData; 256] {
+    pub fn tiles() -> [TileData; 256] {
         let mut atlas = vec![];
         for i in 0..=255 {
             let tile: Tile = FromPrimitive::from_u8(i).unwrap_or_default();
-            atlas.push(tile.render_data());
+            atlas.push(tile.data());
         }
 
         atlas.try_into().unwrap()
@@ -77,6 +73,6 @@ mod tests {
 
     #[test]
     fn atlas_creation() {
-        Tile::render_atlas();
+        Tile::tiles();
     }
 }

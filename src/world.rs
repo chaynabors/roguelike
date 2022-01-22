@@ -2,12 +2,18 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::chunk::Chunk;
+use crate::entity::Entity;
+use crate::light::Light;
 
 #[derive(Deserialize, Serialize)]
-struct World {
-    name: String,
-    seed: u32,
+pub struct World {
+    pub name: String,
+    pub seed: u32,
 
-    #[serde(skip_serializing)]
-    loaded_chunks: Vec<Chunk>,
+    #[serde(skip)]
+    pub chunks: Vec<Chunk>,
+    #[serde(skip)]
+    pub entities: Vec<Entity>,
+    #[serde(skip)]
+    pub lights: Vec<Light>,
 }
