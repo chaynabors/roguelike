@@ -16,9 +16,9 @@ struct ChunkData {
 };
 
 struct Tile {
-    atlas_position: vec2<u32>;
-    color: u32;
-    detail: u32;
+    material: i32;
+    primary_color: u32;
+    secondary_color: u32;
 };
 
 struct TileData {
@@ -34,7 +34,15 @@ var<storage, read> chunk_data: ChunkData;
 [[group(0), binding(3)]]
 var<storage, read> tile_data: TileData;
 [[group(0), binding(4)]]
-var tile_atlas: texture_2d<f32>;
+var materials: texture_2d_array<f32>;
+
+[[stage(vertex)]]
+fn vs_main([[builtin(vertex_index)]] vertex_index: u32) -> [[builtin(position)]] vec4<f32> {
+    let vertex_index = i32(vertex_index);
+    let x = f32(vertex_index % 2 * 2 - 1);
+    let y = f32(vertex_index / 2 * 2 - 1);
+    return vec4<f32>(x, y, 0.0, 1.0);
+}
 
 fn get_tile(x: u32, y: u32) -> u32 {
     let pixels_per_chunk_axis = TILE_SIZE * CHUNK_SIZE;
@@ -58,16 +66,15 @@ fn fs_main([[builtin(position)]] position: vec4<f32>) -> [[location(0)]] vec4<f3
     let left = u32(tile == get_tile(position.x - TILE_SIZE, position.y)) << 1u;
     let right = u32(tile == get_tile(position.x + TILE_SIZE, position.y));
 
-    var linear_sprite_offset = (up | down ^ (up | down) >> 1u) << 2u | (left | right ^ (left | right) >> 1u);
-    let sprite_offset = vec2<u32>(linear_sprite_offset % 4u, linear_sprite_offset / 4u) * TILE_SIZE;
+    let linear_sprite_offset = (up | down ^ (up | down) >> 1u) << 2u | (left | right ^ (left | right) >> 1u);
+    let sprite_offset = vec2<i32>(vec2<u32>((linear_sprite_offset % 4u) * TILE_SIZE, (linear_sprite_offset / 4u) * TILE_SIZE));
 
     let tile_data = tile_data.data[tile];
-    let atlas_position = vec2<i32>(tile_data.atlas_position * vec2<u32>(TILE_SIZE * 4u) + sprite_offset);
-    let tile_color = unpack4x8unorm(tile_data.color);
-    let tile_detail = unpack4x8unorm(tile_data.detail);
+    let material = tile_data.material;
+    let primary_color = unpack4x8unorm(tile_data.primary_color);
+    let secondary_color = unpack4x8unorm(tile_data.secondary_color);
 
-    let raw_color = textureLoad(tile_atlas, vec2<i32>(position.xy % TILE_SIZE) + atlas_position, 0);
-    let color = raw_color * tile_color + vec4<f32>(1.0 - raw_color.rgb, raw_color.a) * tile_detail;
-    let debug = vec4<f32>(f32(linear_sprite_offset));
+    var color = textureLoad(materials, vec2<i32>(position.xy % TILE_SIZE) + sprite_offset, material, 0);
+    color = primary_color * color + secondary_color * vec4<f32>(1.0 - color.rgb, color.a);
     return color;
 }

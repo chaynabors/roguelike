@@ -6,27 +6,19 @@ use num_traits::FromPrimitive;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::material::Material;
+
 pub const TILE_SIZE: u32 = 16;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct TileData {
-    atlas_position: [u32; 2], // 32 * 2
-    color: [u8; 4],
-    detail: [u8; 4],
+    material: u32,
+    primary_color: [u8; 4],
+    secondary_color: [u8; 4],
 }
 
-impl TileData {
-    fn new(atlas_position: [u32; 2], color: [u8; 4], detail: Option<[u8; 4]>) -> Self {
-        Self {
-            atlas_position,
-            color,
-            detail: detail.unwrap_or(color),
-        }
-    }
-}
-
-#[repr(u8)]
+#[repr(C)]
 #[derive(Copy, Clone, Debug, Deserialize, FromPrimitive, Serialize, ToPrimitive)]
 pub enum Tile {
     Void = 0,
@@ -35,44 +27,44 @@ pub enum Tile {
 }
 
 impl Tile {
-    pub fn data(self) -> TileData {
+    /// Get the material of a specific tile
+    pub fn material(self) -> Material {
         match self {
-            Tile::Wall => TileData::new([0, 1], [255, 255, 255, 255], Some([0, 0, 255, 255])),
-            Tile::Planks => TileData::new([2, 1], [255, 255, 255, 255], Some([220, 220, 220, 255])),
-            _ => TileData::default(),
+            Tile::Void => Material::Void,
+            Tile::Wall => Material::Wall,
+            Tile::Planks => Material::OrderlyTwist,
         }
     }
 
-    pub fn tiles() -> [TileData; 256] {
+    /// Get the primary color of a specific tile
+    pub fn primary_color(self) -> [u8; 4] {
+        match self {
+            Tile::Void => [0, 0, 0, 0],
+            Tile::Wall => [255, 255, 255, 255],
+            Tile::Planks => [255, 255, 255, 255],
+        }
+    }
+
+    /// Get the secondary color of a specific tile
+    pub fn secondary_color(self) -> [u8; 4] {
+        match self {
+            Tile::Wall => [0, 0, 255, 255],
+            Tile::Planks => [220, 220, 220, 255],
+            _ => [0, 0, 0, 0],
+        }
+    }
+
+    pub fn tile_data() -> Vec<TileData> {
         let mut atlas = vec![];
         for i in 0..=255 {
-            let tile: Tile = FromPrimitive::from_u8(i).unwrap_or_default();
-            atlas.push(tile.data());
+            let tile: Tile = FromPrimitive::from_u8(i).unwrap_or(Tile::Void);
+            atlas.push(TileData {
+                material: tile.material() as u32,
+                primary_color: tile.primary_color(),
+                secondary_color: tile.secondary_color(),
+            });
         }
 
-        atlas.try_into().unwrap()
-    }
-}
-
-impl Default for Tile {
-    fn default() -> Self {
-        Tile::Void
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Tile;
-
-    #[test]
-    fn serialization() {
-        let tile = Tile::Void;
-        let serialized = serde_json::to_string(&tile).unwrap();
-        serde_json::from_str::<Tile>(&serialized).unwrap();
-    }
-
-    #[test]
-    fn atlas_creation() {
-        Tile::tiles();
+        atlas
     }
 }
